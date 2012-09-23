@@ -94,34 +94,69 @@ captured with \\(\\) in the key.
 (defvar etags-table-last-table-list nil
   "Save the last table list so it can be reused if a new one is not found")
 
-(defun etags-table-build-table-list (filename)
-  "Build tags table list based on a filename"
-  (let (tables)
 
-    ;; Search up
+(defvar etags-table-generate-tags nil
+  "if set to non-nil, when a tag file is not found up the dir tree, the user is prompted to create one.")
+
+(defvar etags-table-create-table-command-string nil
+  "A literal string of the command to be run for etags. If this
+  is non-nil it is used instead of any other command, otherwise a
+  command is generated. For c files you may want to set it by
+  hand.")
+
+(defun etags-table-create-table-command (filename)
+  "A function that returns the command to create etags for all
+files with the same extension as filename. It is safe to assume
+that the current directory is the project root."
+  (if (null etags-table-create-table-command-string)
+      (format "find . -type f -name '*%s' | etags -" (file-name-extension filename t))
+    etags-table-create-table-command-string))
+
+(defun etags-table-search-up (filename)
+  "Search up for a TAGS file an return a list with a single elemet of that directory name+TAGS"
+  (let (tables)
     (when etags-table-search-up-depth
       (let ((depth etags-table-search-up-depth)
-            (dir (file-name-directory filename)))
-        (while (and (>= depth 0) dir)
-          (when (file-exists-p (concat dir "TAGS"))
-            (setq tables (list (concat dir "TAGS")))
-            (setq depth 0))
-          (setq dir (file-name-directory (directory-file-name dir)))
-          (setq depth (1- depth)))))
+	    (dir (file-name-directory filename)))
+	;; Search up
+	(while (and (>= depth 0) dir)
+	  (when (file-exists-p (concat dir "TAGS"))
+	    (setq tables (list (concat dir "TAGS")))
+	    (setq depth 0))
+	  (setq dir (file-name-directory (directory-file-name dir)))
+	  (setq depth (1- depth)))))))
 
+(defun etags-table-create-maybe (tables)
+  "If the table given is empty try to create one."
+  (if (and (null tables) etags-table-generate-tags
+	       (y-or-n-p "No TAGS file was found on this tree. Create one?"))
+	  ;; Create an etags table
+	  (let* ((proj-root (expand-file-name (read-directory-name "Root of the project: ")))
+		 (cmd (format "cd %s ; %s"
+			      (expand-file-name proj-root) (etags-table-create-table-command filename))))
+	    (when (not (string= "" proj-root))
+	      (message (format "Generating etags file: %s" cmd))
+	      (shell-command cmd)
+	      (list (concat proj-root "TAGS"))))
+	tables))
+
+(defun etags-table-build-table-list (filename)
+  "Build tags table list based on a filename"
+  (let ((tables (etags-table-search-up filename)))
+    (message "Found tags table at %s" (car tables))
     ;; Go through mapping alist
     (mapc (lambda (mapping)
-            (let ((key (car mapping))
-                  (tag-files (cdr mapping)))
-              (when (string-match key filename)
-                (mapc (lambda (tag-file)
-                        (add-to-list 'tables (file-truename (replace-match tag-file t nil filename)) t))
-                      tag-files))))
-          etags-table-alist)
+	    (let ((key (car mapping))
+		  (tag-files (cdr mapping)))
+	      (when (string-match key filename)
+		(mapc (lambda (tag-file)
+			(add-to-list 'tables (file-truename (replace-match tag-file t nil filename)) t))
+		      tag-files))))
+	  etags-table-alist)
 
     ;; Return result or the original list
     (setq etags-table-last-table-list
-          (or tables tags-table-list etags-table-last-table-list))))
+	  (or (etags-table-create-maybe tables) tags-table-list etags-table-last-table-list))))
 
 (defun etags-table-recompute ()
   (when (and (or etags-table-alist etags-table-search-up-depth) (buffer-file-name))
@@ -151,7 +186,7 @@ captured with \\(\\) in the key.
        "Clear the completion table (maybe)"
        (etags-table-recompute)
        (unless (equal tags-table-computed-list-for (mapcar 'tags-expand-table-name tags-table-list))
-         (setq tags-completion-table nil)))))
+	 (setq tags-completion-table nil)))))
 
 (provide 'etags-table)
 ;;; etags-table.el ends here
