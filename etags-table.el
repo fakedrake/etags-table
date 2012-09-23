@@ -112,33 +112,45 @@ that the current directory is the project root."
       (format "find . -type f -name '*%s' | etags -" (file-name-extension filename t))
     etags-table-create-table-command-string))
 
+(defun etags-table-parent-dirs (dir &optional extend max-depth)
+  "Get a list of all parent directories concated with extend if
+available. A '/' at the end of dir indicates that it is a
+directory and is included in the returned list.
+
+Extend Extends adds a suffix to the resulting list's cars.
+
+max-depth positive integer indicates the maximum depth we should
+go into. In other words the number of items in the resulting
+list. Non-positive or nil means no constraint."
+  (let ((dirlist (if (stringp dir) (list (file-name-directory dir)) dir))
+	(depth (or max-depth -1)))
+    (if (or (string= "/" (car dirlist)) (equal (1- depth) 0)) ; should we stop appending?
+	(mapcar (lambda (x) (concat x extend)) (reverse dirlist)) ; the result
+      (etags-table-parent-dirs
+       (cons (file-name-directory (directory-file-name (car dirlist))) dirlist) ; the list so far
+       extend (1- depth)))))
+
 (defun etags-table-search-up (filename)
-  "Search up for a TAGS file an return a list with a single elemet of that directory name+TAGS"
-  (let (tables)
-    (when etags-table-search-up-depth
-      (let ((depth etags-table-search-up-depth)
-	    (dir (file-name-directory filename)))
-	;; Search up
-	(while (and (>= depth 0) dir)
-	  (when (file-exists-p (concat dir "TAGS"))
-	    (setq tables (list (concat dir "TAGS")))
-	    (setq depth 0))
-	  (setq dir (file-name-directory (directory-file-name dir)))
-	  (setq depth (1- depth)))))))
+  "Search up for a TAGS file and return a list with a single elemet of that directory name+TAGS."
+  (when etags-table-search-up-depth
+    ;; Search up
+    (remove-if-not 'file-exists-p
+		   (etags-table-parent-dirs
+		    (expand-file-name filename) "TAGS" etags-table-search-up-depth))))
 
 (defun etags-table-create-maybe (tables)
-  "If the table given is empty try to create one."
+  "If the table given is empty try to create one, otherwise just return it."
   (if (and (null tables) etags-table-generate-tags
-	       (y-or-n-p "No TAGS file was found on this tree. Create one?"))
-	  ;; Create an etags table
-	  (let* ((proj-root (expand-file-name (read-directory-name "Root of the project: ")))
-		 (cmd (format "cd %s ; %s"
-			      (expand-file-name proj-root) (etags-table-create-table-command filename))))
-	    (when (not (string= "" proj-root))
-	      (message (format "Generating etags file: %s" cmd))
-	      (shell-command cmd)
-	      (list (concat proj-root "TAGS"))))
-	tables))
+	   (y-or-n-p "No TAGS file was found on this tree. Create one?"))
+      ;; Create an etags table
+      (let* ((proj-root (expand-file-name (read-directory-name "Root of the project: ")))
+	     (cmd (format "cd %s ; %s"
+			  (expand-file-name proj-root) (etags-table-create-table-command filename))))
+	(when (not (string= "" proj-root))
+	  (message (format "Generating etags file: %s" cmd))
+	  (shell-command cmd)
+	  (list (concat proj-root "TAGS"))))
+    tables))
 
 (defun etags-table-build-table-list (filename)
   "Build tags table list based on a filename"
